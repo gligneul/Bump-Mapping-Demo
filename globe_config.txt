@@ -1,0 +1,13 @@
+vertex_shader:      bump_vs.glsl
+fragment_shader:    bump_fs.glsl
+image_path:         data/globe_hq.png
+hmap_path:          data/globe_hmap_lq.png
+eye:                0.0, -0.6, 1.8
+center:             0.0, 0.0, 0.0
+up:                 0.0, 1.0, 0.0
+light:              -2.0, 0.0, 2.0, 0.001
+diffuse:            0.6, 0.6, 0.6
+ambient:            0.0, 0.0, 0.0
+specular:           0.5, 0.5, 0.4
+shininess:          16.0
+rotation:           150.0

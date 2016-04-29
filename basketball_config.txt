@@ -1,0 +1,13 @@
+vertex_shader:      bump_vs.glsl
+fragment_shader:    bump_fs.glsl
+image_path:         data/basketball.png
+hmap_path:          data/basketball_hmap_blur.png
+eye:                0.0, 0.0, 2.5
+center:             0.0, 0.0, 0.0
+up:                 0.0, 1.0, 0.0
+light:              2.0, 2.0, 2.0, 0.5
+diffuse:            0.8, 0.8, 0.8
+ambient:            0.0, 0.0, 0.0
+specular:           1.0, 1.0, 1.0
+shininess:          150.0
+rotation:           120.0

@@ -29,17 +29,35 @@
 
 #include <glm/glm.hpp>
 
+/**
+ * Opengl shader abstraction
+ */
 class ShaderProgram {
 public:
     /**
-     * Loads, compiles and links the shader program
+     * Default constructor, does nothing
      */
-    ShaderProgram(const char* vs, const char* fs);
+    ShaderProgram();
 
     /**
      * Destructor
      */
     ~ShaderProgram();
+
+    /**
+     * Loads and compiles the vertex program
+     */
+    void LoadVertexShader(const std::string& path);
+
+    /**
+     * Loads and compiles the fragment program
+     */
+    void LoadFragmentShader(const std::string& path);
+
+    /**
+     * Links the shader program
+     */
+    void LinkShader();
 
     /**
      * Enables or disables the program
@@ -62,6 +80,11 @@ public:
     void SetUniform(const std::string& name, const glm::mat4& value);
 
     /**
+     * Binds a texture to a sampler
+     */
+    void SetTexture2D(const std::string& name, int sampler_id, int texture_id);
+
+    /**
      * Obtains the shader program handle
      */
     unsigned int GetHandle();
@@ -75,14 +98,11 @@ private:
     /**
      * Loads and compiles a shader from a file
      */
-    void CompileShader(int shader_type, const std::string& path);
-
-    /**
-     * Links the shader program
-     */
-    void LinkShader();
+    void CompileShader(unsigned int *id, int shader_type, const std::string& path);
 
     unsigned int program_;
+    unsigned int vs_;
+    unsigned int fs_;
 };
 
 #endif

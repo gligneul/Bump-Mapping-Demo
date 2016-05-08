@@ -31,32 +31,51 @@
 
 #include "ShaderProgram.h"
 
-ShaderProgram::ShaderProgram(const char* vs, const char* fs) :
-    program_(glCreateProgram()) {
-    CompileShader(GL_VERTEX_SHADER, vs); 
-    CompileShader(GL_FRAGMENT_SHADER, fs);
-    LinkShader();
+ShaderProgram::ShaderProgram() :
+    program_(0),
+    vs_(0),
+    fs_(0) {
 }
 
 ShaderProgram::~ShaderProgram() {
-    glDeleteProgram(program_);
+    if (vs_)
+        glDeleteShader(vs_);
+    if (fs_)
+        glDeleteShader(fs_);
+    if (program_)
+        glDeleteProgram(program_);
 }
 
-unsigned int ShaderProgram::GetHandle() {
-    return program_;
+void ShaderProgram::LoadVertexShader(const std::string& path) {
+    CompileShader(&vs_, GL_VERTEX_SHADER, path); 
 }
 
-std::string ShaderProgram::ReadFile(const std::string& path) {
-    std::ifstream input(path);
-    if (!input.is_open())
-        throw std::runtime_error("Unable to open file: " + path);
-    std::string output;
-    while (!input.eof()) {
-        char line[1024];
-        input.getline(line, 1024);
-        output = output + line + "\n";
+void ShaderProgram::LoadFragmentShader(const std::string& path) {
+    CompileShader(&fs_, GL_FRAGMENT_SHADER, path);
+}
+
+void ShaderProgram::LinkShader() {
+    if (!vs_ || !fs_)
+        throw new std::runtime_error("Vertex or fragment not loaded");
+
+    program_ = glCreateProgram();
+    glAttachShader(program_, vs_);
+    glAttachShader(program_, fs_);
+    glLinkProgram(program_);
+    glDeleteShader(vs_);
+    vs_ = 0;
+    glDeleteShader(fs_);
+    fs_ = 0;
+
+    int success = 0;
+    glGetProgramiv(program_, GL_LINK_STATUS, &success);
+    if (!success) {
+        GLint length = 0;
+        glGetProgramiv(program_, GL_INFO_LOG_LENGTH, &length);
+        char log[length];
+        glGetProgramInfoLog(program_, length, &length, log);
+        throw std::runtime_error(std::string("link error: ") + log);
     }
-    return output;
 }
 
 void ShaderProgram::Enable() {
@@ -65,6 +84,10 @@ void ShaderProgram::Enable() {
 
 void ShaderProgram::Disable() {
     glUseProgram(0);
+}
+
+void ShaderProgram::SetAttribLocation(const char *name, unsigned int location) {
+    glBindAttribLocation(program_, location, name);
 }
 
 void ShaderProgram::SetUniform(const std::string& name, int value) {
@@ -95,11 +118,31 @@ void ShaderProgram::SetUniform(const std::string& name,
     glUniformMatrix4fv(location, 1, false, glm::value_ptr(value));
 }
 
-void ShaderProgram::SetAttribLocation(const char *name, unsigned int location) {
-    glBindAttribLocation(program_, location, name);
+void ShaderProgram::SetTexture2D(const std::string& name, int sampler_id,
+        int texture_id) {
+    glActiveTexture(GL_TEXTURE0 + sampler_id);
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+    SetUniform(name, sampler_id);
 }
 
-void ShaderProgram::CompileShader(int shader_type, const std::string& path) {
+unsigned int ShaderProgram::GetHandle() {
+    return program_;
+}
+
+std::string ShaderProgram::ReadFile(const std::string& path) {
+    std::ifstream input(path);
+    if (!input.is_open())
+        throw std::runtime_error("Unable to open file: " + path);
+    std::string output;
+    while (!input.eof()) {
+        char line[1024];
+        input.getline(line, 1024);
+        output = output + line + "\n";
+    }
+    return output;
+}
+
+void ShaderProgram::CompileShader(unsigned int *id, int shader_type, const std::string& path) {
     auto shader_str = ReadFile(path);
     auto shader_cstr = shader_str.c_str();
     auto shader = glCreateShader(shader_type);
@@ -115,11 +158,6 @@ void ShaderProgram::CompileShader(int shader_type, const std::string& path) {
         glDeleteShader(shader);
         throw std::runtime_error(path + ": " + log);
     }
-    glAttachShader(program_, shader);
-}
-
-void ShaderProgram::LinkShader() {
-    glLinkProgram(program_);
-    // TODO verify status
+    *id = shader;
 }
 

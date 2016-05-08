@@ -25,16 +25,19 @@
 #include <cmath>
 #include <cstdio>
 #include <vector>
+#include <iostream>
 
 #include <glm/gtx/transform.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/glm.hpp>
 #include <GL/glew.h>
-#include <GL/glu.h>
-#include <GL/glut.h>
+#include <GLFW/glfw3.h>
+#include <lodepng.h>
 
-#include "lodepng.h"
+#include "Manipulator.h"
 #include "ShaderProgram.h"
+#include "VertexArray.h"
+#include "Texture2D.h"
 
 // Types
 struct Image {
@@ -61,23 +64,20 @@ struct Image {
 };
 
 // Constants
-static const int kWindowW = 1920;
-static const int kWindowH = 1080;
 static const int kN = 64;
 static const int kM = 64;
 static const int kNumIndices = 6 * (kN - 1) * (kM - 1);
 
-// Device variables
-static ShaderProgram *shader = nullptr;
-static unsigned int d_vao = 0;
-static unsigned int d_indices = 0;
-static unsigned int d_vertices = 0;
-static unsigned int d_normals = 0;
-static unsigned int d_tangents = 0;
-static unsigned int d_binormals = 0;
-static unsigned int d_textcoords = 0;
-static unsigned int d_image = 0;
-static unsigned int d_bumpmap = 0;
+// Window size
+static int window_w = 1920;
+static int window_h = 1080;
+
+// Helpers
+static Manipulator manipulator;
+static ShaderProgram shader;
+static VertexArray ball;
+static Texture2D image;
+static Texture2D bumpmap;
 
 // Matrices
 static glm::mat4 model;
@@ -99,18 +99,26 @@ static glm::vec3 diffuse;
 static glm::vec3 ambient;
 static glm::vec3 specular;
 static float shininess = 0.0f;
-static float rotation = 0.0f;
 
-// Controls
-static bool rotate = false;
+// Verifies the condition, if it fails, shows the error message and
+// exits the program
+#define Assert(condition, format, ...) { \
+    if (!condition) { \
+        auto finalformat = std::string("Error at function %s: ") \
+                + format + "\n"; \
+        fprintf(stderr, finalformat.c_str(), __func__, __VA_ARGS__); \
+        exit(1); \
+    } \
+}
 
 // Loads the shader
 static void CreateShader() {
     try {
-        shader = new ShaderProgram(vertex_shader, fragment_shader);
+        shader.LoadVertexShader(vertex_shader);
+        shader.LoadFragmentShader(fragment_shader);
+        shader.LinkShader();
     } catch (std::exception& e) {
-        fprintf(stderr, "%s: %s\n", __func__, e.what());
-        exit(1);
+        Assert(false, "%s", e.what());
     }
 }
 
@@ -175,79 +183,37 @@ static void CreateSphereCoordinates(std::vector< unsigned int >& indices,
     }
 } 
 
-// Creates an opengl array buffer
-template< typename T >
-static void CreateArrayBuffer(unsigned int* buffer, int location, int data_size,
-        int data_type, const std::vector< T >& data) {
-    glGenBuffers(1, buffer);
-    glBindBuffer(GL_ARRAY_BUFFER, *buffer);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(T) * data.size(), data.data(),
-            GL_STATIC_DRAW);
-    glEnableVertexAttribArray(location);
-    glVertexAttribPointer(location, data_size, data_type, false, 0, NULL);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-}
-
-// Creates the opengl buffers
-static void CreateVAO( const std::vector< unsigned int >& indices,
-                       const std::vector< float >& vertices,
-                       const std::vector< float >& normals,
-                       const std::vector< float >& tangents,
-                       const std::vector< float >& binormals,
-                       const std::vector< float >& textcoords) {
-    glGenVertexArrays(1, &d_vao);
-    glBindVertexArray(d_vao);
-
-    glGenBuffers(1, &d_indices);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, d_indices);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * kNumIndices,
-            indices.data(), GL_STATIC_DRAW);
-
-    CreateArrayBuffer(&d_vertices, 0, 3, GL_FLOAT, vertices);
-    CreateArrayBuffer(&d_normals, 1, 3, GL_FLOAT, normals);
-    CreateArrayBuffer(&d_tangents, 2, 3, GL_FLOAT, tangents);
-    CreateArrayBuffer(&d_binormals, 3, 3, GL_FLOAT, binormals);
-    CreateArrayBuffer(&d_textcoords, 4, 2, GL_FLOAT, textcoords);
-    
-
-    glBindVertexArray(0);
-}
-
 // Creates the sphere
 static void CreateSphere() {
     std::vector< unsigned int > indices;
     std::vector< float > vertices, normals, tangents, binormals, textcoords;
     CreateSphereCoordinates(indices, vertices, normals, tangents, binormals,
             textcoords);
-    CreateVAO(indices, vertices, normals, tangents, binormals, textcoords);
+
+    ball.Init();
+    ball.SetElementArray(indices.data(), indices.size());
+    ball.AddArray(0, vertices.data(), vertices.size(), 3);
+    ball.AddArray(1, normals.data(), normals.size(), 3);
+    ball.AddArray(2, tangents.data(), tangents.size(), 3);
+    ball.AddArray(3, binormals.data(), binormals.size(), 3);
+    ball.AddArray(4, textcoords.data(), textcoords.size(), 2);
 }
 
-// Updates the variables that depend on the modelview and projection
+// Updates the variables that depend on the model, view and projection
 static void UpdateMatrices() {
+    model = manipulator.GetMatrix(glm::normalize(center - eye));
+    view = glm::lookAt(eye, center, up);
+    auto ratio = (float)window_w / (float)window_h;
+    projection = glm::perspective(glm::radians(60.0f), ratio, 0.1f, 10.0f);
     mvp = projection * view * model;
     model_inv = glm::inverse(model);
-}
-
-// Creates the model, view and projection matrices
-static void CreateMatrices() {
-    int vp[4]; 
-    glGetIntegerv(GL_VIEWPORT, vp); 
-    auto ratio = (float)vp[2] / vp[3];
-    projection = glm::perspective(glm::radians(60.0f), ratio, 0.1f, 10.0f);
-    view = glm::lookAt(eye, center, up);
-    model = glm::rotate(glm::radians(rotation), glm::vec3(0, 1, 0));
-    UpdateMatrices();
 }
 
 // Load a png image to memory
 static Image LoadPNG(const char* path) {
     Image image;
     unsigned int error = lodepng::decode(image.data, image.w, image.h, path);
-    if (error) {
-        fprintf(stderr, "%s: lodepng error:\n%s\n", __func__,
-                lodepng_error_text(error));
-        exit(1);
-    }
+    Assert(!error, "lodepng error: %s", lodepng_error_text(error));
     for (unsigned int i = 0; i < image.w; ++i) {
         for (unsigned int j = 0; j < image.h / 2; ++j) {
             auto top = image.get(i, j);
@@ -281,24 +247,13 @@ static Image CreateBumpMap(Image elevation) {
     return bump;
 }
 
-// Load an image into an opengl buffer
-static void LoadTexture(unsigned int *location, Image image) {
-    glGenTextures(1, location);
-    glBindTexture(GL_TEXTURE_2D, *location);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image.w, image.h, 0,
-            GL_RGBA, GL_UNSIGNED_BYTE, image.data.data());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-            GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glGenerateMipmap(GL_TEXTURE_2D);
-}
-
 // Loads the texture
 static void CreateTextures() {
-    LoadTexture(&d_image, LoadPNG(image_path));
-    LoadTexture(&d_bumpmap, CreateBumpMap(LoadPNG(hmap_path)));
+    auto LoadTexture = [](Texture2D* texture, Image image) {
+        texture->LoadTexture(image.data.data(), image.w, image.h);
+    };
+    LoadTexture(&image, LoadPNG(image_path));
+    LoadTexture(&bumpmap, CreateBumpMap(LoadPNG(hmap_path)));
 }
 
 // Loads the global opengl configuration
@@ -313,82 +268,82 @@ static void CreateScene() {
     CreateShader();
     CreateSphere();
     CreateTextures();
-    CreateMatrices();
+    UpdateMatrices();
 }
 
 // Loads the shader's uniform variables
 static void LoadShaderVariables() {
-    shader->SetUniform("mvp", mvp);
-    shader->SetUniform("model_inv", model_inv);
-    shader->SetUniform("light_pos", light);
-    shader->SetUniform("eye_pos", eye);
-    shader->SetUniform("diffuse", diffuse);
-    shader->SetUniform("ambient", ambient);
-    shader->SetUniform("specular", specular);
-    shader->SetUniform("shininess", shininess);
-
-    auto TextureToShader = [&](int n, const char *name, int bufferid) {
-        glActiveTexture(GL_TEXTURE0 + n);
-        glBindTexture(GL_TEXTURE_2D, bufferid);
-        shader->SetUniform(name, n);
-    };
-    TextureToShader(0, "image", d_image);
-    TextureToShader(1, "bumpmap", d_bumpmap);
+    shader.SetUniform("mvp", mvp);
+    shader.SetUniform("model_inv", model_inv);
+    shader.SetUniform("light_pos", light);
+    shader.SetUniform("eye_pos", eye);
+    shader.SetUniform("diffuse", diffuse);
+    shader.SetUniform("ambient", ambient);
+    shader.SetUniform("specular", specular);
+    shader.SetUniform("shininess", shininess);
+    shader.SetTexture2D("image", 0, image.GetId());
+    shader.SetTexture2D("bumpmap", 1, bumpmap.GetId());
 }
 
 // Display callback, renders the sphere
 static void Display() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    shader->Enable();
+    shader.Enable();
     LoadShaderVariables();
-    glBindVertexArray(d_vao);
-    glDrawElements(GL_TRIANGLES, kNumIndices, GL_UNSIGNED_INT, 0);
-    glBindVertexArray(0);
-    shader->Disable();
-    glutSwapBuffers();
+    ball.DrawElements(GL_TRIANGLES, kNumIndices, GL_UNSIGNED_INT);
+    shader.Disable();
 }
 
 // Resize callback
-static void Reshape(int w, int h) {
-    glViewport(0, 0, w, h);
-    auto ratio = (float)w / h;
-    projection = glm::perspective(glm::radians(60.0f), ratio, 0.1f, 10.0f);
+static void Reshape(GLFWwindow *window) {
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+    if (width == window_w && height == window_h)
+        return;
+
+    window_w = width;
+    window_h = height;
+    glViewport(0, 0, width, height);
     UpdateMatrices();
 }
 
 // Keyboard callback
-static void Keyboard(unsigned char key, int, int) {
+static void Keyboard(GLFWwindow* window, int key, int scancode, int action,
+                     int mods) {
+    if (action != GLFW_PRESS)
+        return;
+
     switch (key) {
-        case 'q':
+        case GLFW_KEY_Q:
             exit(0);
-            break;
-        case ' ':
-            rotate = !rotate;
             break;
         default:
             break;
     }
 }
 
-// Idle callback
-static void Idle() {
-    if (rotate) {
-        model = glm::rotate(model, 0.005f, glm::vec3(0, 1, 0));
-//        light = glm::rotate(-0.005f, glm::vec3(0, 1, 0)) * light;
-        UpdateMatrices();
-        glutPostRedisplay();
-    }
+// Mouse Callback
+static void Mouse(GLFWwindow *window, int button, int action, int mods) {
+    double x, y;
+    glfwGetCursorPos(window, &x, &y);
+    auto manip_button = (button == GLFW_MOUSE_BUTTON_LEFT) ? 0 :
+                        (button == GLFW_MOUSE_BUTTON_RIGHT) ? 1 : -1;
+    auto pressed = action == GLFW_PRESS;
+    manipulator.MouseClick(manip_button, pressed, (int)x, (int)y);
+    UpdateMatrices();
+}
+
+// Motion callback
+static void Motion(GLFWwindow *window, double x, double y) {
+    manipulator.MouseMotion((int)x, (int)y);
+    UpdateMatrices();
 }
 
 // Loads the configuration file
 static void LoadConfiguration(int argc, char *argv[]) {
     const char *config_file = argc > 1 ? argv[1] : "config.txt";
     FILE *f = fopen(config_file, "r");
-    if (!f) {
-        fprintf(stderr, "%s: Cannot open configuration file: %s\n", __func__,
-                config_file);
-        exit(1);
-    }
+    Assert(f, "cannot open configuration file %s", config_file);
 
     fscanf(f, "vertex_shader: %127s\n", vertex_shader);
     fscanf(f, "fragment_shader: %127s\n", fragment_shader);
@@ -402,30 +357,39 @@ static void LoadConfiguration(int argc, char *argv[]) {
     fscanf(f, "ambient: %f, %f, %f\n", &ambient.x, &ambient.y, &ambient.z);
     fscanf(f, "specular: %f, %f, %f\n", &specular.x, &specular.y, &specular.z);
     fscanf(f, "shininess: %f\n", &shininess);
-    fscanf(f, "rotation: %f\n", &rotation);
 
     fclose(f);
 }
 
 // Initialization
 int main(int argc, char *argv[]) {
-    glutInit(&argc, argv);
-    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH | 
-            GLUT_MULTISAMPLE);
-    glutInitWindowSize(kWindowW, kWindowH);
-    glutCreateWindow("Bump Mapping");
-    glutDisplayFunc(Display);
-    glutReshapeFunc(Reshape);
-    glutKeyboardFunc(Keyboard);
-    glutIdleFunc(Idle);
-    GLenum err = glewInit();
-    if (err != GLEW_OK) {
-        fprintf(stderr, "GLEW Error: %s\n", glewGetErrorString(err));
-        exit(1);
-    }
+    // Init glfw
+    Assert(glfwInit(), "glfw init failed", 0);
+    auto window = glfwCreateWindow(window_w, window_h, "OpenGL4 Application",
+            nullptr, nullptr);
+    Assert(window, "glfw window couldn't be created", 0);
+    glfwMakeContextCurrent(window);
+    glfwSetKeyCallback(window, Keyboard);
+    glfwSetMouseButtonCallback(window, Mouse);
+    glfwSetCursorPosCallback(window, Motion);
+
+    // Init glew
+    auto glew_error = glewInit();
+    Assert(!glew_error, "GLEW error: %s", glewGetErrorString(glew_error));
+
+    // Init application
     LoadConfiguration(argc, argv);
     CreateScene();
-    glutMainLoop();
+
+    // Main loop
+    while (!glfwWindowShouldClose(window)) {
+        Reshape(window);
+        Display();
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    };
+
+    glfwTerminate();
     return 0;
 }
 

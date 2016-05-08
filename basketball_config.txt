@@ -10,4 +10,3 @@ diffuse:            0.8, 0.8, 0.8
 ambient:            0.0, 0.0, 0.0
 specular:           1.0, 1.0, 1.0
 shininess:          150.0
-rotation:           120.0
